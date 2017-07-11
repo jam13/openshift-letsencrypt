@@ -1,7 +1,6 @@
 # Automatic Certificates for Openshift Routes
 
 It will manage all `route`s with (by default) `butter.sh/letsencrypt-managed=yes` labels in the project/namespace, it's deployed in.
-Certificates will be stored in secrets starting with `letsencrypt-`.
 
 
 ## Limitations
@@ -27,6 +26,14 @@ The following env variables can be used.
  * `LETSENCRYPT_KEYTYPE` (*optional*, defaults to `rsa`), the key algorithm to use;
  * `LETSENCRYPT_KEYSIZE` (*optional*, defaults to `4096`), the size in bit for the private keys (if applicable);
 
+
+## Troubleshooting
+
+### Route does not get admitted
+
+Please test, whether DNS is set up correctly. In particular the hostname to get
+a certificate for has to point to the router (or the loadbalancer), also from
+within the cluster!
 
 
 ## Implementation Details
@@ -72,21 +79,39 @@ Instanciate the template.
 ### Service Account
 
 The "letsencrypt" service account needs to be able to manage its secrets and manage routes.
-For now, the admin role can be used, but that should be tightened considerably.
 
 ```
-> oc policy add-role-to-user edit system:serviceaccount:letsencrypt:default
+> oc policy add-role-to-user edit -z letsencrypt
 ```
 
 ### Let's encrypt credentials
 
-Given an account-key (from running [dehydrated](https://github.com/lukas2511/dehydrated) or any other tool), create a secret as follows.
+#### Register an account key
+
+You can skip that section, if you already use letsencrypt and already have an account key.
+
+Get [dehydrated](https://github.com/lukas2511/dehydrated) and run the following commands.
+
+```shell
+> echo CONTACT_EMAIL=test@example.com > my_config
+> /path/to/dehydrated -f config --register --accept-terms
+```
+
+This will generate a key in `./accounts/*/account_key.pem` and info about it in
+`./accounts/*/registration_info.json`.
+
+
+#### Create the account key secret
+
+Given an account-key, create a secret as follows.
 
 ```
-> oc secrets new letsencrypt-creds account-key=/path/to/account-key.pem
+> oc create secret generic letsencrypt-creds \
+     --from-file=account-key=/path/to/account-key.pem \
+     --from-file=registration-info=./accounts/*/registration_info.json
 ```
 
-In the future that part should be done by the container itself.
+The registration info is not strictly necessary.
 
 
 ## Notes
@@ -99,7 +124,3 @@ Maybe pre-generate `n` keys and pin all of them.
 On key rollover, delete the previous key, use the oldest of the remaining keys to sign the certificate, generate a new key and pin the new keys.
 That way, the pin can stay valid for `(n-1)* lifetime of a key`.
 That is, if no key gets compromised!
-
-### Locking
-
-Should be done with `flock` around `/var/lib/letsencrypt-container/$DOMAINNAME`, whenever a certificate is to be touched.
